@@ -1,0 +1,109 @@
+name: Sync Release Artifacts to JFrog
+
+on:
+  workflow_call:
+    inputs:
+      tag_name:
+        description: 'Release tag to sync (defaults to published release tag)'
+        required: false
+        type: string
+    secrets:
+      JF_ACCESS_TOKEN:
+        description: 'JFrog Access Token'
+        required: true
+      JF_USER:
+        description: 'JFrog Username'
+        required: false
+      JF_URL:
+        description: 'JFrog Artifactory URL'
+        required: false
+
+jobs:
+  move-file-artifacts:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Resolve Release Tag
+        id: vars
+        run: |
+          TAG="${{ inputs.tag_name || github.event.release.tag_name }}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Operating on Release Tag: $TAG"
+
+      - name: Fetch GitHub Release Assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p downloads
+          gh release download "${{ steps.vars.outputs.tag }}" --repo "${{ github.repository }}" --dir ./downloads || echo "No release assets found."
+
+      - name: Setup JFrog CLI
+        uses: jfrog/setup-jfrog-cli@v4
+        env:
+          JF_URL: ${{ secrets.JF_URL || 'https://linuxfoundation.jfrog.io/artifactory' }}
+          JF_ACCESS_TOKEN: ${{ secrets.JF_ACCESS_TOKEN }}
+
+      - name: Upload Debian Packages (s390x)
+        run: |
+          if compgen -G "./downloads/*.deb" > /dev/null; then
+            echo "Found .deb packages. Uploading..."
+            jfrog rt upload "./downloads/*.deb" "omp-debian-release-local/pool/${{ steps.vars.outputs.tag }}/" \
+              --flat=true \
+              --target-props="deb.distribution=stable;deb.component=main;deb.architecture=s390x" \
+              --build-name="gh-release-sync" \
+              --build-number="${{ github.run_number }}"
+          fi
+
+      - name: Upload RPM Packages
+        run: |
+          if compgen -G "./downloads/*.rpm" > /dev/null; then
+            echo "Found .rpm packages. Uploading..."
+            jfrog rt upload "./downloads/*.rpm" "omp-binaries-release-local/rpm/${{ steps.vars.outputs.tag }}/" \
+              --flat=true \
+              --build-name="gh-release-sync" \
+              --build-number="${{ github.run_number }}"
+          fi
+
+      - name: Upload Generic Tarballs
+        run: |
+          shopt -s extglob nullglob
+          generic_files=(./downloads/!(*.deb|*.rpm))
+          if [ ${#generic_files[@]} -gt 0 ]; then
+            echo "Found generic assets. Uploading..."
+            jfrog rt upload "./downloads/*" "omp-binaries-release-local/${{ steps.vars.outputs.tag }}/" \
+              --flat=true \
+              --exclusions="*.deb;*.rpm" \
+              --build-name="gh-release-sync" \
+              --build-number="${{ github.run_number }}"
+          fi
+
+      - name: Publish Build Info
+        run: |
+          jfrog rt build-collect-env "gh-release-sync" "${{ github.run_number }}"
+          jfrog rt build-publish "gh-release-sync" "${{ github.run_number }}"
+
+  move-container-image:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install Skopeo
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y skopeo
+
+      - name: Copy s390x Container Image
+        run: |
+          TAG="${{ inputs.tag_name || github.event.release.tag_name }}"
+          SRC_IMAGE="docker://ghcr.io/${{ github.repository }}:${TAG}"
+          DEST_IMAGE="docker://linuxfoundation.jfrog.io/omp-docker-release-local/${{ github.event.repository.name }}:${TAG}"
+
+          if skopeo inspect --creds="${{ github.actor }}:${{ secrets.GITHUB_TOKEN }}" "$SRC_IMAGE" > /dev/null 2>&1; then
+            echo "Copying $SRC_IMAGE to $DEST_IMAGE..."
+            skopeo copy \
+              --src-creds="${{ github.actor }}:${{ secrets.GITHUB_TOKEN }}" \
+              --dest-creds="${{ secrets.JF_USER }}:${{ secrets.JF_ACCESS_TOKEN }}" \
+              "$SRC_IMAGE" "$DEST_IMAGE"
+          else
+            echo "No container image found at $SRC_IMAGE, skipping."
+          fi

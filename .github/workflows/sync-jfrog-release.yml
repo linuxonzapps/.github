@@ -74,7 +74,7 @@ jobs:
             echo "Found generic assets. Uploading..."
             jfrog rt upload "./downloads/*" "omp-binaries-release-local/${{ steps.vars.outputs.tag }}/" \
               --flat=true \
-              --exclusions="*.deb;*.rpm,*.md5;*.sha1;*.sha256,*.container.tar" \
+              --exclusions="*.deb;*.rpm;*.md5;*.sha1;*.sha256;*.container.tar" \
               --build-name="gh-release-sync" \
               --build-number="${{ github.run_number }}"
           fi

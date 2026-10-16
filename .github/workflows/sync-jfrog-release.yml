@@ -49,7 +49,7 @@ jobs:
         run: |
           if compgen -G "./downloads/*.deb" > /dev/null; then
             echo "Found .deb packages. Uploading..."
-            jfrog rt upload "./downloads/*.deb" "omp-debian-release-local/pool/${{ steps.vars.outputs.tag }}/" \
+            jfrog rt upload "./downloads/*.deb" "omp-debian-release-local/${{ steps.vars.outputs.tag }}/" \
               --flat=true \
               --target-props="deb.distribution=stable;deb.component=main;deb.architecture=s390x" \
               --build-name="gh-release-sync" \

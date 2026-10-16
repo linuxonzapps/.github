@@ -79,11 +79,6 @@ jobs:
               --build-number="${{ github.run_number }}"
           fi
 
-      - name: Publish Build Info
-        run: |
-          jfrog rt build-collect-env "gh-release-sync" "${{ github.run_number }}"
-          jfrog rt build-publish "gh-release-sync" "${{ github.run_number }}"
-
   move-container-image:
     runs-on: ubuntu-latest
     steps:

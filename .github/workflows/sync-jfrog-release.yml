@@ -129,28 +129,39 @@ jobs:
           TAG="${{ inputs.tag_name || github.event.release.tag_name }}"
           [ -z "$TAG" ] && { echo "No release tag found, skipping image copy."; exit 0; }
 
-          # Find packages linked to this repo in GHCR, or fallback to repo name
-          PKGS=$(gh api "/orgs/${{ github.repository_owner }}/packages?package_type=container" \
+          CANDIDATES=("${{ github.repository }}")
+
+          # Safely query GHCR for any linked container package names
+          DISCOVERED=$(gh api "/orgs/${{ github.repository_owner }}/packages" \
+            -F package_type=container \
             --jq ".[] | select(.repository.full_name == \"${{ github.repository }}\") | .name" 2>/dev/null || true)
-          [ -z "$PKGS" ] && PKGS="${{ github.event.repository.name }}"
 
-          for pkg in $PKGS; do
-            IMAGE_PATH="${{ github.repository_owner }}/$pkg"
-            APP_NAME="$(basename "$pkg")"
+          # Append discovered package paths if response is valid (not JSON error)
+          if [ -n "$DISCOVERED" ] && [[ ! "$DISCOVERED" =~ ^\{ ]]; then
+            while IFS= read -r pkg; do
+              [ -n "$pkg" ] && CANDIDATES+=("${{ github.repository_owner }}/$pkg")
+            done <<< "$DISCOVERED"
+          fi
 
-            # Try tag without 'v' (e.g. 1.19.0) and with 'v' (e.g. v1.19.0)
+          # Deduplicate candidates
+          UNIQUE_CANDIDATES=($(printf "%s\n" "${CANDIDATES[@]}" | sort -u))
+
+          for image_path in "${UNIQUE_CANDIDATES[@]}"; do
+            APP_NAME="$(basename "$image_path")"
+
+            # Probe tag without 'v' (e.g. 3.9.3) and with 'v' (e.g. v3.9.3)
             for t in "${TAG#v}" "$TAG"; do
-              SRC="docker://ghcr.io/${IMAGE_PATH}:${t}"
+              SRC="docker://ghcr.io/${image_path}:${t}"
               DEST="docker://linuxfoundation.jfrog.io/${{ inputs.docker_repo }}/${APP_NAME}:${t}"
 
               echo "Checking $SRC..."
               if skopeo inspect --creds="${{ github.actor }}:${{ secrets.GITHUB_TOKEN }}" "$SRC" >/dev/null 2>&1; then
-                echo "Copying $SRC -> $DEST..."
+                echo "Found image at $SRC. Copying to $DEST..."
                 skopeo copy \
                   --src-creds="${{ github.actor }}:${{ secrets.GITHUB_TOKEN }}" \
                   --dest-creds="${{ secrets.JF_USER }}:${{ secrets.JF_ACCESS_TOKEN }}" \
                   "$SRC" "$DEST"
-                break
+                break 2
               fi
             done
           done

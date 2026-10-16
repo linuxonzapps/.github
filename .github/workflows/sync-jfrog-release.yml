@@ -7,6 +7,10 @@ on:
         description: 'Release tag to sync (defaults to github.event.release.tag_name)'
         required: false
         type: string
+      image_name:
+        description: 'GHCR image path if different from <org>/<repo> (e.g. linuxonzapps/openpolicyagent/opa or openpolicyagent/opa)'
+        required: false
+        type: string        
       debian_repo:
         description: 'JFrog Debian repository name'
         required: false
@@ -122,46 +126,32 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y skopeo
 
-      - name: Discover and Copy Container Image
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Copy Container Image
         run: |
           TAG="${{ inputs.tag_name || github.event.release.tag_name }}"
           [ -z "$TAG" ] && { echo "No release tag found, skipping image copy."; exit 0; }
 
-          CANDIDATES=("${{ github.repository }}")
+          # Resolve image name (e.g. openpolicyagent/opa -> linuxonzapps/openpolicyagent/opa)
+          IMG="${{ inputs.image_name || github.repository }}"
+          IMG="${IMG#ghcr.io/}"
+          IMG="${IMG#docker://}"
+          [[ "$IMG" != "${{ github.repository_owner }}/"* ]] && IMG="${{ github.repository_owner }}/$IMG"
+          APP_NAME="$(basename "$IMG")"
 
-          # Safely query GHCR for any linked container package names
-          DISCOVERED=$(gh api "/orgs/${{ github.repository_owner }}/packages" \
-            -F package_type=container \
-            --jq ".[] | select(.repository.full_name == \"${{ github.repository }}\") | .name" 2>/dev/null || true)
+          # Probe tag without 'v' (1.19.0) and with 'v' (v1.19.0)
+          for t in "${TAG#v}" "$TAG"; do
+            SRC="docker://ghcr.io/${IMG}:${t}"
+            DEST="docker://linuxfoundation.jfrog.io/${{ inputs.docker_repo }}/${APP_NAME}:${t}"
 
-          # Append discovered package paths if response is valid (not JSON error)
-          if [ -n "$DISCOVERED" ] && [[ ! "$DISCOVERED" =~ ^\{ ]]; then
-            while IFS= read -r pkg; do
-              [ -n "$pkg" ] && CANDIDATES+=("${{ github.repository_owner }}/$pkg")
-            done <<< "$DISCOVERED"
-          fi
-
-          # Deduplicate candidates
-          UNIQUE_CANDIDATES=($(printf "%s\n" "${CANDIDATES[@]}" | sort -u))
-
-          for image_path in "${UNIQUE_CANDIDATES[@]}"; do
-            APP_NAME="$(basename "$image_path")"
-
-            # Probe tag without 'v' (e.g. 3.9.3) and with 'v' (e.g. v3.9.3)
-            for t in "${TAG#v}" "$TAG"; do
-              SRC="docker://ghcr.io/${image_path}:${t}"
-              DEST="docker://linuxfoundation.jfrog.io/${{ inputs.docker_repo }}/${APP_NAME}:${t}"
-
-              echo "Checking $SRC..."
-              if skopeo inspect --creds="${{ github.actor }}:${{ secrets.GITHUB_TOKEN }}" "$SRC" >/dev/null 2>&1; then
-                echo "Found image at $SRC. Copying to $DEST..."
-                skopeo copy \
-                  --src-creds="${{ github.actor }}:${{ secrets.GITHUB_TOKEN }}" \
-                  --dest-creds="${{ secrets.JF_USER }}:${{ secrets.JF_ACCESS_TOKEN }}" \
-                  "$SRC" "$DEST"
-                break 2
-              fi
-            done
+            echo "Checking $SRC..."
+            if skopeo inspect --creds="${{ github.actor }}:${{ secrets.GITHUB_TOKEN }}" "$SRC" >/dev/null 2>&1; then
+              echo "Copying $SRC -> $DEST..."
+              skopeo copy \
+                --src-creds="${{ github.actor }}:${{ secrets.GITHUB_TOKEN }}" \
+                --dest-creds="${{ secrets.JF_USER }}:${{ secrets.JF_ACCESS_TOKEN }}" \
+                "$SRC" "$DEST"
+              exit 0
+            fi
           done
+
+          echo "No container image found for $IMG with tag '${TAG#v}' or '$TAG', skipping image copy."

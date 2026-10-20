@@ -105,7 +105,7 @@ jobs:
           generic_files=(./downloads/!(*.deb|*.rpm|*.md5|*.sha1|*.sha256|*.container.tar))
           if [ ${#generic_files[@]} -gt 0 ]; then
             echo "Found generic assets. Uploading to ${{ inputs.binaries_repo }}..."
-            jfrog rt upload "./downloads/*" "${{ inputs.binaries_repo }}/gh-release-sync-${{ github.event.repository.name }}/${{ steps.vars.outputs.tag }}/" \
+            jfrog rt upload "./downloads/*" "${{ inputs.binaries_repo }}/${{ github.event.repository.name }}/${{ steps.vars.outputs.tag }}/" \
               --flat=true \
               --exclusions="*.deb;*.rpm;*.md5;*.sha1;*.sha256;*.container.tar" \
               --build-name="gh-release-sync-${{ github.event.repository.name }}" \

@@ -76,9 +76,9 @@ jobs:
         run: |
           if compgen -G "./downloads/*.deb" > /dev/null; then
             echo "Found .deb packages. Uploading to ${{ inputs.debian_repo }}..."
-            jfrog rt upload "./downloads/*.deb" "${{ inputs.debian_repo }}/${{ steps.vars.outputs.tag }}/" \
+            jfrog rt upload "./downloads/*.deb" "${{ inputs.debian_repo }}/pool/" \
               --flat=true \
-              --target-props="deb.distribution=stable;deb.component=main;deb.architecture=s390x" \
+              --deb="jammy/main/s390x" \
               --build-name="gh-release-sync-${{ github.event.repository.name }}" \
               --build-number="${{ github.run_number }}"
           else
@@ -90,7 +90,7 @@ jobs:
         run: |
           if compgen -G "./downloads/*.rpm" > /dev/null; then
             echo "Found .rpm packages. Uploading to ${{ inputs.rpm_repo }}..."
-            jfrog rt upload "./downloads/*.rpm" "${{ inputs.rpm_repo }}/${{ steps.vars.outputs.tag }}/" \
+            jfrog rt upload "./downloads/*.rpm" "${{ inputs.rpm_repo }}/Packages/s390x/" \
               --flat=true \
               --build-name="gh-release-sync-${{ github.event.repository.name }}" \
               --build-number="${{ github.run_number }}"
@@ -105,7 +105,7 @@ jobs:
           generic_files=(./downloads/!(*.deb|*.rpm|*.md5|*.sha1|*.sha256|*.container.tar))
           if [ ${#generic_files[@]} -gt 0 ]; then
             echo "Found generic assets. Uploading to ${{ inputs.binaries_repo }}..."
-            jfrog rt upload "./downloads/*" "${{ inputs.binaries_repo }}/${{ steps.vars.outputs.tag }}/" \
+            jfrog rt upload "./downloads/*" "${{ inputs.binaries_repo }}/gh-release-sync-${{ github.event.repository.name }}/${{ steps.vars.outputs.tag }}/" \
               --flat=true \
               --exclusions="*.deb;*.rpm;*.md5;*.sha1;*.sha256;*.container.tar" \
               --build-name="gh-release-sync-${{ github.event.repository.name }}" \
